@@ -2,10 +2,12 @@
 
 //! This crate provides the "emit" library for emitting OTLP signals generated from registries.
 
+use logs::emit_logs_for_registry;
 use metrics::emit_metrics_for_registry;
 use miette::Diagnostic;
 use opentelemetry::global;
 use opentelemetry_otlp::{ExporterBuildError, MetricExporter, WithExportConfig};
+use opentelemetry_sdk::logs::SdkLoggerProvider;
 use opentelemetry_sdk::metrics::SdkMeterProvider;
 use opentelemetry_sdk::Resource;
 use opentelemetry_sdk::{metrics::PeriodicReader, trace::SdkTracerProvider};
@@ -15,6 +17,7 @@ use weaver_common::diagnostic::{DiagnosticMessage, DiagnosticMessages};
 use weaver_forge::registry::ResolvedRegistry;
 
 pub mod attributes;
+pub mod logs;
 pub mod metrics;
 pub mod spans;
 
@@ -42,6 +45,12 @@ pub enum Error {
     /// Metric provider error.
     #[error("Metric provider error. Check your Otel configuration. {error}")]
     MetricProviderError {
+        /// The error that occurred.
+        error: String,
+    },
+    /// Logger provider error.
+    #[error("Logger provider error. Check your Otel configuration. {error}")]
+    LoggerProviderError {
         /// The error that occurred.
         error: String,
     },
@@ -117,6 +126,35 @@ fn init_stdout_meter_provider() -> SdkMeterProvider {
         .build()
 }
 
+/// Initialise a gRPC OTLP exporter for logs, sends to by default http://localhost:4317
+/// but can be overridden with the standard OTEL_EXPORTER_OTLP_ENDPOINT env var.
+fn init_logger_provider(endpoint: &String) -> Result<SdkLoggerProvider, ExporterBuildError> {
+    let exporter = opentelemetry_otlp::LogExporter::builder()
+        .with_tonic()
+        .with_endpoint(endpoint)
+        .build()?;
+    Ok(SdkLoggerProvider::builder()
+        .with_resource(
+            Resource::builder()
+                .with_service_name(WEAVER_SERVICE_NAME)
+                .build(),
+        )
+        .with_batch_exporter(exporter)
+        .build())
+}
+
+/// Initialise a stdout exporter for logs for debug
+fn init_stdout_logger_provider() -> SdkLoggerProvider {
+    SdkLoggerProvider::builder()
+        .with_resource(
+            Resource::builder()
+                .with_service_name(WEAVER_SERVICE_NAME)
+                .build(),
+        )
+        .with_simple_exporter(opentelemetry_stdout::LogExporter::default())
+        .build()
+}
+
 /// The configuration for the tracer provider.
 #[derive(Debug)]
 pub enum ExporterConfig {
@@ -174,6 +212,24 @@ pub fn emit(
         meter_provider
             .shutdown()
             .map_err(|e| Error::MetricProviderError {
+                error: e.to_string(),
+            })?;
+
+        // Emit logs
+        let logger_provider = match exporter_config {
+            ExporterConfig::Stdout => init_stdout_logger_provider(),
+            ExporterConfig::Otlp { endpoint } => {
+                init_logger_provider(endpoint).map_err(|e| Error::LoggerProviderError {
+                    error: e.to_string(),
+                })?
+            }
+        };
+
+        emit_logs_for_registry(&registry, &logger_provider);
+
+        logger_provider
+            .shutdown()
+            .map_err(|e| Error::LoggerProviderError {
                 error: e.to_string(),
             })?;
         Ok(())
