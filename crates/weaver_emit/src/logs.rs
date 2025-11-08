@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//! Translations from Weaver to Otel for logs.
+//! Translations from Weaver to OTel for logs.
 
 use crate::attributes::get_attribute_name_value;
 use opentelemetry::logs::{AnyValue, Logger, LoggerProvider, LogRecord};

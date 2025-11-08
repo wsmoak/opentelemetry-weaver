@@ -49,7 +49,7 @@ pub enum Error {
         error: String,
     },
     /// Logger provider error.
-    #[error("Logger provider error. Check your Otel configuration. {error}")]
+    #[error("Logger provider error. Check your OTel configuration. {error}")]
     LoggerProviderError {
         /// The error that occurred.
         error: String,
